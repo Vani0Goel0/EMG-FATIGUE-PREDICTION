@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>sEMG Muscle Fatigue Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans antialiased p-6">
+    <div class="max-w-6xl mx-auto space-y-6">
+        
+        <!-- Header -->
+        <header class="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-800 pb-4 gap-4">
+            <div>
+                <h1 class="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
+                    <span class="inline-block w-3 h-3 rounded-full bg-emerald-500 animate-pulse"></span>
+                    sEMG Muscle Fatigue Monitor
+                </h1>
+                <p class="text-sm text-slate-400">ESP32 + BioAmp EXG Pill (Channel 4) • Live RBF-SVM Stream</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <button onclick="resetCalibration()" class="px-4 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-all shadow-md cursor-pointer flex items-center gap-1.5">
+                    🔄 Reset Calibration
+                </button>
+                <span id="connection-status" class="px-3 py-1 text-xs font-medium rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                    Connecting...
+                </span>
+            </div>
+        </header>
+
+        <!-- Main Status Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col justify-between shadow-lg">
+                <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Muscle State</span>
+                <div id="status-display" class="text-3xl font-extrabold text-emerald-400 my-2">🟢 NORMAL</div>
+                <span id="status-subtext" class="text-xs text-slate-500">System Initializing</span>
+            </div>
+
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col justify-between shadow-lg">
+                <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Fatigue Probability</span>
+                <div class="flex items-baseline gap-2 my-2">
+                    <span id="prob-display" class="text-3xl font-extrabold text-white">0.0</span>
+                    <span class="text-lg font-bold text-slate-400">%</span>
+                </div>
+                <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                    <div id="prob-bar" class="bg-emerald-500 h-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col justify-between shadow-lg">
+                <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">RMS Ratio (Amplitude)</span>
+                <div class="text-3xl font-extrabold text-cyan-400 my-2" id="rms-display">0.00</div>
+                <span class="text-xs text-slate-500">Baseline Multiplier</span>
+            </div>
+
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col justify-between shadow-lg">
+                <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">MDF Ratio (Frequency)</span>
+                <div class="text-3xl font-extrabold text-indigo-400 my-2" id="mdf-display">0.00</div>
+                <span class="text-xs text-slate-500">Spectral Shift Indicator</span>
+            </div>
+        </div>
+
+        <!-- Real-time Chart Section -->
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-lg">
+            <h2 class="text-lg font-semibold text-white mb-4">Real-Time Telemetry Trends</h2>
+            <div class="h-72 w-full">
+                <canvas id="telemetryChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+
+        function resetCalibration() {
+            socket.emit('request_reset');
+            console.log("Sent calibration reset request.");
+        }
+
+        socket.on('connection_status', (data) => {
+            const badge = document.getElementById('connection-status');
+            badge.innerText = data.status;
+            badge.className = data.connected 
+                ? "px-3 py-1 text-xs font-medium rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                : "px-3 py-1 text-xs font-medium rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20";
+        });
+
+        // Initialize Chart.js
+        const ctx = document.getElementById('telemetryChart').getContext('2d');
+        const telemetryChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    { label: 'Fatigue Probability (%)', data: [], borderColor: '#10b981', backgroundColor: 'rgba(16, 185, 129, 0.05)', borderWidth: 2, tension: 0.3, fill: true, yAxisID: 'y' },
+                    { label: 'RMS Ratio', data: [], borderColor: '#06b6d4', borderWidth: 1.5, tension: 0.3, yAxisID: 'y1' },
+                    { label: 'MDF Ratio', data: [], borderColor: '#6366f1', borderWidth: 1.5, tension: 0.3, yAxisID: 'y1' }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                scales: {
+                    x: { grid: { color: '#1e293b' }, ticks: { color: '#64748b' } },
+                    y: { type: 'linear', display: true, position: 'left', min: 0, max: 100, grid: { color: '#1e293b' }, ticks: { color: '#64748b' } },
+                    y1: { type: 'linear', display: true, position: 'right', min: 0, max: 3, grid: { drawOnChartArea: false }, ticks: { color: '#64748b' } }
+                },
+                plugins: { legend: { labels: { color: '#cbd5e1' } } }
+            }
+        });
+
+        socket.on('fatigue_update', (data) => {
+            document.getElementById('status-display').innerText = data.status;
+            document.getElementById('status-display').className = data.status.includes('FATIGUED') ? 'text-3xl font-extrabold text-rose-500 my-2' : 'text-3xl font-extrabold text-emerald-400 my-2';
+            document.getElementById('status-subtext').innerText = data.subtext;
+            
+            document.getElementById('prob-display').innerText = data.prob.toFixed(1);
+            const probBar = document.getElementById('prob-bar');
+            probBar.style.width = data.prob + '%';
+            probBar.className = data.prob > 50 ? 'bg-rose-500 h-full transition-all duration-300' : 'bg-emerald-500 h-full transition-all duration-300';
+            
+            document.getElementById('rms-display').innerText = data.rms.toFixed(2);
+            document.getElementById('mdf-display').innerText = data.mdf.toFixed(2);
+
+            const timeLabel = new Date().toLocaleTimeString();
+            if (telemetryChart.data.labels.length > 20) {
+                telemetryChart.data.labels.shift();
+                telemetryChart.data.datasets[0].data.shift();
+                telemetryChart.data.datasets[1].data.shift();
+                telemetryChart.data.datasets[2].data.shift();
+            }
+            telemetryChart.data.labels.push(timeLabel);
+            telemetryChart.data.datasets[0].data.push(data.prob);
+            telemetryChart.data.datasets[1].data.push(data.rms);
+            telemetryChart.data.datasets[2].data.push(data.mdf);
+            telemetryChart.update();
+        });
+    </script>
+</body>
+</html>
